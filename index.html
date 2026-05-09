@@ -705,7 +705,7 @@ header::after {
 <body>
 
 <header>
-  <div class="logo">Blitz<span>♠</span>BlackJack</div>
+  <div class="logo">Blitz<span>♠</span>Jack</div>
   <div class="stats">
     <div class="stat">
       <div class="stat-label">Balance</div>
@@ -1218,21 +1218,81 @@ function endHand() {
   }, 1500);
 }
 
+const JSONBIN_API_KEY = '$2a$10$3A1O6TpNz93s5rjua8hGw.s6CUd39mBy88XFiUG6ZWwV5ik1A9JlW';
+const JSONBIN_BASE = 'https://api.jsonbin.io/v3';
+const BIN_ID = '69ff8464c0954111d8fd7221';
+
 function getMonthKey() {
   const now = new Date();
-  return `blitzBJ_${now.getFullYear()}_${now.getMonth() + 1}`;
+  return `${now.getFullYear()}_${now.getMonth() + 1}`;
 }
 
 function getMonthLabel() {
   return new Date().toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 }
 
-function saveLeaderboard(name) {
-  leaderboard.push({ name, score: balance });
-  leaderboard.sort((a, b) => b.score - a.score);
-  leaderboard = leaderboard.slice(0, 10);
-  try { localStorage.setItem(getMonthKey(), JSON.stringify(leaderboard)); } catch {}
+async function loadLeaderboard() {
+  document.getElementById('lb-title').textContent = getMonthLabel();
+  leaderboard = [];
   renderLeaderboard();
+
+  try {
+    const res = await fetch(`${JSONBIN_BASE}/b/${BIN_ID}/latest`, {
+      headers: { 'X-Master-Key': JSONBIN_API_KEY }
+    });
+    if (!res.ok) throw new Error('Fetch failed');
+    const data = await res.json();
+    // Filter to current month's scores only
+    const monthKey = getMonthKey();
+    const all = Array.isArray(data.record) ? data.record : [];
+    leaderboard = all.filter(e => e.month === monthKey);
+  } catch (e) {
+    console.warn('JSONBin load failed:', e);
+    leaderboard = [];
+  }
+
+  renderLeaderboard();
+}
+
+async function saveLeaderboard(name) {
+  const monthKey = getMonthKey();
+
+  // Fetch current full record first
+  let all = [];
+  try {
+    const res = await fetch(`${JSONBIN_BASE}/b/${BIN_ID}/latest`, {
+      headers: { 'X-Master-Key': JSONBIN_API_KEY }
+    });
+    const data = await res.json();
+    all = Array.isArray(data.record) ? data.record : [];
+    // Strip placeholder and old months
+    all = all.filter(e => e.score > 0);
+  } catch {}
+
+  // Add new score with month tag
+  all.push({ name, score: balance, month: monthKey });
+  all.sort((a, b) => b.score - a.score);
+
+  // Keep top 10 per month
+  const thisMonth = all.filter(e => e.month === monthKey).slice(0, 10);
+  const otherMonths = all.filter(e => e.month !== monthKey);
+  const updated = [...thisMonth, ...otherMonths];
+
+  leaderboard = thisMonth;
+  renderLeaderboard();
+
+  try {
+    await fetch(`${JSONBIN_BASE}/b/${BIN_ID}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': JSONBIN_API_KEY
+      },
+      body: JSON.stringify(updated)
+    });
+  } catch (e) {
+    console.warn('JSONBin save failed:', e);
+  }
 }
 
 function endGame(busted = false) {
@@ -1291,16 +1351,6 @@ function startTimer() {
     if (timeLeft <= 30) document.getElementById('timer').style.color = '#ff4444';
     if (timeLeft <= 0) endGame();
   }, 1000);
-}
-
-function loadLeaderboard() {
-  try {
-    const saved = localStorage.getItem(getMonthKey());
-    if (saved) leaderboard = JSON.parse(saved);
-    else leaderboard = [];
-  } catch { leaderboard = []; }
-  document.getElementById('lb-title').textContent = getMonthLabel();
-  renderLeaderboard();
 }
 
 function renderLeaderboard() {
